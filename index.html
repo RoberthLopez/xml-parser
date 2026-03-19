@@ -1,0 +1,969 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>XML Parser</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@300;400;500;600&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #0d0d0d;
+      --surface:  #141414;
+      --border:   #242424;
+      --border2:  #2e2e2e;
+      --text:     #e8e4d9;
+      --muted:    #5a5550;
+      --accent:   #d4a853;
+      --accent2:  #c47a3a;
+      --tag:      #7eb8c4;
+      --attr:     #a8c97e;
+      --val:      #d4a853;
+      --str:      #c98a6e;
+      --error:    #e06c6c;
+      --r: 4px;
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Azeret Mono', monospace;
+      font-size: 13px;
+      line-height: 1.6;
+      overflow: hidden;
+    }
+
+    /* ── GRAIN OVERLAY ── */
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+      pointer-events: none;
+      z-index: 9999;
+      opacity: 0.6;
+    }
+
+    /* ── LAYOUT ── */
+    .app {
+      display: grid;
+      grid-template-rows: 52px 1fr;
+      height: 100vh;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      padding: 0 20px;
+      border-bottom: 1px solid var(--border);
+      gap: 16px;
+      background: var(--surface);
+    }
+
+    .logo {
+      font-family: 'DM Serif Display', serif;
+      font-size: 20px;
+      letter-spacing: -0.5px;
+      color: var(--accent);
+    }
+
+    .logo span {
+      color: var(--muted);
+      font-style: italic;
+    }
+
+    .badge {
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      border: 1px solid var(--border2);
+      padding: 2px 8px;
+      border-radius: 20px;
+    }
+
+    .header-actions {
+      margin-left: auto;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 12px;
+      border-radius: var(--r);
+      border: 1px solid var(--border2);
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 11px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      transition: all 0.15s;
+    }
+
+    .btn:hover { border-color: var(--accent); color: var(--accent); }
+
+    .btn-primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #0d0d0d;
+      font-weight: 600;
+    }
+
+    .btn-primary:hover {
+      background: var(--accent2);
+      border-color: var(--accent2);
+      color: #0d0d0d;
+    }
+
+    .main {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      overflow: hidden;
+    }
+
+    /* ── PANE ── */
+    .pane {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .pane:first-child {
+      border-right: 1px solid var(--border);
+    }
+
+    .pane-header {
+      display: flex;
+      align-items: center;
+      padding: 8px 14px;
+      border-bottom: 1px solid var(--border);
+      gap: 10px;
+      min-height: 40px;
+    }
+
+    .pane-title {
+      font-size: 10px;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .pane-title strong {
+      color: var(--text);
+    }
+
+    .line-count {
+      margin-left: auto;
+      font-size: 10px;
+      color: var(--muted);
+    }
+
+    /* ── INPUT ── */
+    .editor-wrap {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .line-numbers {
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 44px;
+      padding: 14px 0;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      overflow: hidden;
+      text-align: right;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.6;
+      user-select: none;
+      pointer-events: none;
+    }
+
+    .line-numbers span {
+      display: block;
+      padding-right: 10px;
+    }
+
+    textarea {
+      position: absolute;
+      inset: 0;
+      left: 44px;
+      width: calc(100% - 44px);
+      background: transparent;
+      border: none;
+      outline: none;
+      resize: none;
+      color: var(--text);
+      font-family: 'Azeret Mono', monospace;
+      font-size: 12.5px;
+      line-height: 1.6;
+      padding: 14px 16px;
+      caret-color: var(--accent);
+      tab-size: 2;
+    }
+
+    textarea::placeholder { color: var(--muted); }
+    textarea::selection { background: rgba(212, 168, 83, 0.2); }
+
+    /* ── OUTPUT TREE ── */
+    .output {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px 0;
+    }
+
+    .output::-webkit-scrollbar { width: 6px; }
+    .output::-webkit-scrollbar-track { background: transparent; }
+    .output::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      gap: 10px;
+      color: var(--muted);
+    }
+
+    .empty-icon {
+      font-size: 36px;
+      opacity: 0.3;
+      font-family: 'DM Serif Display', serif;
+      font-style: italic;
+    }
+
+    .empty-label {
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    /* ── XML NODE ── */
+    .node {
+      padding: 0 12px;
+      animation: fadeSlide 0.2s ease both;
+    }
+
+    @keyframes fadeSlide {
+      from { opacity: 0; transform: translateX(-6px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+
+    .node-row {
+      display: flex;
+      align-items: baseline;
+      gap: 0;
+      padding: 2px 4px;
+      border-radius: var(--r);
+      cursor: pointer;
+      transition: background 0.1s;
+      position: relative;
+      min-height: 24px;
+    }
+
+    .node-row:hover { background: rgba(255,255,255,0.04); }
+    .node-row.selected { background: rgba(212, 168, 83, 0.1); }
+
+    .toggle {
+      width: 16px;
+      flex-shrink: 0;
+      color: var(--muted);
+      font-size: 10px;
+      user-select: none;
+      transition: transform 0.15s;
+    }
+
+    .toggle.open { transform: rotate(90deg); }
+
+    .node-content {
+      flex: 1;
+      font-size: 12px;
+      line-height: 1.7;
+      word-break: break-all;
+    }
+
+    .tag-open  { color: var(--tag); }
+    .tag-close { color: var(--tag); opacity: 0.5; }
+    .attr-name { color: var(--attr); }
+    .attr-val  { color: var(--val); }
+    .text-node { color: var(--str); font-style: italic; }
+    .bracket   { color: var(--muted); }
+
+    .node-children {
+      border-left: 1px solid var(--border);
+      margin-left: 7px;
+      padding-left: 0;
+    }
+
+    .node-children.collapsed { display: none; }
+
+    /* ── INFO PANEL ── */
+    .info-panel {
+      border-top: 1px solid var(--border);
+      padding: 10px 16px;
+      min-height: 80px;
+      max-height: 160px;
+      overflow-y: auto;
+      background: var(--surface);
+    }
+
+    .info-panel::-webkit-scrollbar { width: 4px; }
+    .info-panel::-webkit-scrollbar-thumb { background: var(--border2); }
+
+    .info-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 4px;
+      font-size: 11px;
+    }
+
+    .info-key   { color: var(--attr); min-width: 80px; }
+    .info-value { color: var(--val); }
+    .info-empty { color: var(--muted); font-size: 11px; letter-spacing: 0.05em; }
+
+    /* ── STATUS BAR ── */
+    .status-bar {
+      border-top: 1px solid var(--border);
+      padding: 4px 14px;
+      display: flex;
+      gap: 16px;
+      align-items: center;
+      background: var(--surface);
+    }
+
+    .status-item {
+      font-size: 10px;
+      color: var(--muted);
+      display: flex;
+      gap: 5px;
+      align-items: center;
+    }
+
+    .status-item strong { color: var(--text); }
+    .status-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--muted);
+    }
+
+    .status-dot.ok   { background: #7eb8a0; }
+    .status-dot.err  { background: var(--error); }
+    .status-dot.idle { background: var(--muted); }
+
+    /* ── ERROR ── */
+    .error-box {
+      margin: 12px;
+      padding: 12px 14px;
+      border: 1px solid rgba(224, 108, 108, 0.3);
+      border-radius: var(--r);
+      background: rgba(224, 108, 108, 0.06);
+      color: var(--error);
+      font-size: 11.5px;
+    }
+
+    .error-box .err-label {
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+      opacity: 0.7;
+    }
+
+    /* ── SEARCH ── */
+    .search-wrap {
+      position: relative;
+      margin-left: auto;
+    }
+
+    .search-input {
+      background: var(--bg);
+      border: 1px solid var(--border2);
+      border-radius: var(--r);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 11px;
+      padding: 4px 10px 4px 28px;
+      outline: none;
+      width: 160px;
+      transition: border-color 0.15s, width 0.2s;
+    }
+
+    .search-input:focus { border-color: var(--accent); width: 200px; }
+
+    .search-icon {
+      position: absolute;
+      left: 8px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--muted);
+      font-size: 12px;
+      pointer-events: none;
+    }
+
+    .node-row.match { outline: 1px solid rgba(212,168,83,0.35); }
+
+    /* ── DIVIDER RESIZE ── */
+    .divider {
+      position: absolute;
+      right: -3px;
+      top: 0; bottom: 0;
+      width: 6px;
+      cursor: col-resize;
+      z-index: 10;
+    }
+
+    /* ── COPY TOAST ── */
+    .toast {
+      position: fixed;
+      bottom: 40px;
+      left: 50%;
+      transform: translateX(-50%) translateY(10px);
+      background: var(--accent);
+      color: #0d0d0d;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 6px 18px;
+      border-radius: 20px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s, transform 0.2s;
+      z-index: 9998;
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+  </style>
+</head>
+<body>
+
+<div class="app">
+  <header>
+    <div class="logo">xml<span>parser</span></div>
+    <div class="badge">v1.0</div>
+    <div class="header-actions">
+      <button class="btn" id="btnFormat">⌘ Format</button>
+      <button class="btn" id="btnClear">Clear</button>
+      <button class="btn btn-primary" id="btnParse">Parse →</button>
+    </div>
+  </header>
+
+  <div class="main">
+    <!-- INPUT PANE -->
+    <div class="pane" id="inputPane">
+      <div class="pane-header">
+        <span class="pane-title"><strong>Input</strong> · XML source</span>
+        <span class="line-count" id="lineCount">0 lines</span>
+      </div>
+      <div class="editor-wrap">
+        <div class="line-numbers" id="lineNumbers"></div>
+        <textarea
+          id="xmlInput"
+          placeholder="Paste or type your XML here…"
+          spellcheck="false"
+          autocomplete="off"
+        ></textarea>
+      </div>
+      <div class="status-bar">
+        <div class="status-item"><div class="status-dot idle" id="statusDot"></div><span id="statusText">Ready</span></div>
+        <div class="status-item" id="charCount">0 chars</div>
+      </div>
+    </div>
+
+    <!-- OUTPUT PANE -->
+    <div class="pane">
+      <div class="pane-header">
+        <span class="pane-title"><strong>Tree</strong> · parsed nodes</span>
+        <div class="search-wrap">
+          <span class="search-icon">⌕</span>
+          <input class="search-input" id="searchInput" type="text" placeholder="Search tags, attrs…" />
+        </div>
+      </div>
+      <div class="output" id="output">
+        <div class="empty-state">
+          <div class="empty-icon">&lt;/&gt;</div>
+          <div class="empty-label">Awaiting input</div>
+        </div>
+      </div>
+      <div class="info-panel" id="infoPanel">
+        <div class="info-empty">Select a node to inspect</div>
+      </div>
+      <div class="status-bar">
+        <div class="status-item">Nodes: <strong id="nodeCount">—</strong></div>
+        <div class="status-item">Depth: <strong id="treeDepth">—</strong></div>
+        <div class="status-item" id="selectedPath" style="margin-left:auto;color:var(--muted);font-size:10px;"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast">Copied!</div>
+
+<script>
+// ── XML PARSER ──────────────────────────────────────────────────────────────
+
+const TOKEN_RE = /(<\?.*?\?>)|(<!--.*?-->)|<([a-zA-Z_][\w.-]*)([^>]*?)\/?>|<\/([a-zA-Z_][\w.-]*)>|([^<]+)/gs;
+const ATTR_RE  = /([\w.-]+)\s*=\s*(?:"([^"]*?)"|'([^']*?)')/g;
+const SC_RE    = /<([a-zA-Z_][\w.-]*)([^>]*?)\s*\/>/gs;
+
+class XMLNode {
+  constructor(tag, attrs = {}) {
+    this.tag = tag;
+    this.attributes = attrs;
+    this.children = [];
+    this.text = '';
+    this.parent = null;
+  }
+}
+
+function parseAttrs(raw = '') {
+  const result = {};
+  let m;
+  ATTR_RE.lastIndex = 0;
+  while ((m = ATTR_RE.exec(raw)) !== null) {
+    result[m[1]] = m[2] !== undefined ? m[2] : m[3];
+  }
+  return result;
+}
+
+function isSelfClosing(raw) {
+  return raw.trimEnd().endsWith('/');
+}
+
+function parseXML(xml) {
+  const stack = [];
+  let root = null;
+  let match;
+  TOKEN_RE.lastIndex = 0;
+
+  while ((match = TOKEN_RE.exec(xml)) !== null) {
+    const [full, pi, comment, scOrOpenTag, attrs, closeTag, text] = match;
+
+    if (pi || comment) continue; // skip
+
+    if (scOrOpenTag) {
+      const selfClose = isSelfClosing(full) || full.startsWith('</') === false && full.trimEnd().endsWith('/>');
+      const node = new XMLNode(scOrOpenTag, parseAttrs(attrs));
+
+      if (stack.length > 0) {
+        const parent = stack[stack.length - 1];
+        node.parent = parent;
+        parent.children.push(node);
+      } else {
+        root = node;
+      }
+
+      if (!selfClose || full.trimEnd().endsWith('/>')) {
+        // Check if truly self-closing
+        if (full.trimEnd().endsWith('/>')) {
+          if (root === null) root = node;
+          // self-closing, don't push
+        } else {
+          stack.push(node);
+          if (root === null) root = node;
+        }
+      }
+    } else if (closeTag) {
+      for (let i = stack.length - 1; i >= 0; i--) {
+        if (stack[i].tag === closeTag) {
+          stack.splice(i);
+          break;
+        }
+      }
+    } else if (text) {
+      const trimmed = text.trim();
+      if (trimmed && stack.length > 0) {
+        stack[stack.length - 1].text += trimmed;
+      }
+    }
+  }
+
+  if (!root) throw new Error('No root element found. Check your XML.');
+  return root;
+}
+
+// Better parser using DOMParser as fallback validation
+function parseXMLSafe(xml) {
+  // Try native DOMParser first for validation
+  const dp = new DOMParser();
+  const doc = dp.parseFromString(xml.trim(), 'application/xml');
+  const err = doc.querySelector('parsererror');
+  if (err) {
+    const msg = err.textContent.split('\n')[0].replace(/error on line \d+/i, '').trim();
+    throw new Error(msg || 'Invalid XML');
+  }
+  // Use our own tree builder from DOM
+  return domToNode(doc.documentElement);
+}
+
+function domToNode(el) {
+  const node = new XMLNode(el.tagName);
+  for (const attr of el.attributes) {
+    node.attributes[attr.name] = attr.value;
+  }
+  for (const child of el.childNodes) {
+    if (child.nodeType === 1) {
+      const c = domToNode(child);
+      c.parent = node;
+      node.children.push(c);
+    } else if (child.nodeType === 3) {
+      const t = child.textContent.trim();
+      if (t) node.text += t;
+    }
+  }
+  return node;
+}
+
+// ── TREE RENDERER ────────────────────────────────────────────────────────────
+
+let nodeStats = { count: 0, depth: 0 };
+let selectedNode = null;
+
+function countNodes(node, d = 0) {
+  nodeStats.count++;
+  nodeStats.depth = Math.max(nodeStats.depth, d);
+  for (const c of node.children) countNodes(c, d + 1);
+}
+
+function nodePath(node) {
+  const parts = [];
+  let cur = node;
+  while (cur) { parts.unshift(cur.tag); cur = cur.parent; }
+  return parts.join(' › ');
+}
+
+function renderNode(node, delay = 0) {
+  const el = document.createElement('div');
+  el.className = 'node';
+  el.style.animationDelay = `${delay}ms`;
+
+  const hasChildren = node.children.length > 0;
+  const hasText = node.text.trim().length > 0;
+  const hasAttrs = Object.keys(node.attributes).length > 0;
+
+  const row = document.createElement('div');
+  row.className = 'node-row';
+  row.dataset.tag = node.tag;
+
+  const toggle = document.createElement('span');
+  toggle.className = 'toggle' + (hasChildren ? ' open' : '');
+  toggle.textContent = hasChildren ? '▶' : ' ';
+  row.appendChild(toggle);
+
+  const content = document.createElement('span');
+  content.className = 'node-content';
+
+  let html = `<span class="bracket">&lt;</span><span class="tag-open">${node.tag}</span>`;
+
+  for (const [k, v] of Object.entries(node.attributes)) {
+    html += ` <span class="attr-name">${k}</span><span class="bracket">=</span><span class="attr-val">"${escHtml(v)}"</span>`;
+  }
+
+  if (!hasChildren && !hasText) {
+    html += `<span class="bracket"> /&gt;</span>`;
+  } else {
+    html += `<span class="bracket">&gt;</span>`;
+    if (hasText && !hasChildren) {
+      html += `<span class="text-node"> ${escHtml(node.text.trim())} </span>`;
+      html += `<span class="bracket">&lt;/</span><span class="tag-close">${node.tag}</span><span class="bracket">&gt;</span>`;
+    }
+  }
+
+  content.innerHTML = html;
+  row.appendChild(content);
+  el.appendChild(row);
+
+  // Children
+  const childWrap = document.createElement('div');
+  childWrap.className = 'node-children';
+
+  if (hasChildren) {
+    node.children.forEach((child, i) => {
+      childWrap.appendChild(renderNode(child, delay + i * 20));
+    });
+
+    if (hasText) {
+      const textEl = document.createElement('div');
+      textEl.className = 'node';
+      textEl.innerHTML = `<div class="node-row" style="cursor:default"><span class="toggle"> </span><span class="node-content text-node">${escHtml(node.text.trim())}</span></div>`;
+      childWrap.appendChild(textEl);
+    }
+
+    const closeRow = document.createElement('div');
+    closeRow.className = 'node';
+    closeRow.innerHTML = `<div class="node-row" style="cursor:default"><span class="toggle"> </span><span class="node-content"><span class="bracket">&lt;/</span><span class="tag-close">${node.tag}</span><span class="bracket">&gt;</span></span></div>`;
+    childWrap.appendChild(closeRow);
+
+    el.appendChild(childWrap);
+
+    // Toggle expand/collapse
+    row.addEventListener('click', (e) => {
+      const open = toggle.classList.contains('open');
+      toggle.classList.toggle('open', !open);
+      childWrap.classList.toggle('collapsed', open);
+      selectNode(node, row);
+      e.stopPropagation();
+    });
+  } else {
+    row.addEventListener('click', () => selectNode(node, row));
+  }
+
+  return el;
+}
+
+function selectNode(node, rowEl) {
+  document.querySelectorAll('.node-row.selected').forEach(r => r.classList.remove('selected'));
+  rowEl.classList.add('selected');
+  selectedNode = node;
+  showInfo(node);
+  document.getElementById('selectedPath').textContent = nodePath(node);
+}
+
+function showInfo(node) {
+  const panel = document.getElementById('infoPanel');
+  const attrs = Object.entries(node.attributes);
+  if (attrs.length === 0 && !node.text.trim()) {
+    panel.innerHTML = `<div class="info-empty">No attributes or text content</div>`;
+    return;
+  }
+
+  let html = '';
+  html += `<div class="info-row"><span class="info-key">tag</span><span class="info-value" style="color:var(--tag)">&lt;${node.tag}&gt;</span></div>`;
+
+  for (const [k, v] of attrs) {
+    html += `<div class="info-row">
+      <span class="info-key">${k}</span>
+      <span class="info-value">"${escHtml(v)}" <span style="cursor:pointer;opacity:0.5;font-size:10px" onclick="copyText('${escAttr(v)}')">⎘ copy</span></span>
+    </div>`;
+  }
+
+  if (node.text.trim()) {
+    html += `<div class="info-row">
+      <span class="info-key">text</span>
+      <span class="info-value" style="color:var(--str)">${escHtml(node.text.trim())} <span style="cursor:pointer;opacity:0.5;font-size:10px" onclick="copyText('${escAttr(node.text.trim())}')">⎘ copy</span></span>
+    </div>`;
+  }
+
+  html += `<div class="info-row" style="margin-top:6px">
+    <span class="info-key">children</span><span class="info-value">${node.children.length}</span>
+  </div>`;
+
+  panel.innerHTML = html;
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function escAttr(s) {
+  return String(s).replace(/'/g, "\\'");
+}
+
+// ── SEARCH ───────────────────────────────────────────────────────────────────
+
+function searchNodes(query) {
+  document.querySelectorAll('.node-row.match').forEach(r => r.classList.remove('match'));
+  if (!query.trim()) return;
+
+  const q = query.toLowerCase();
+  document.querySelectorAll('.node-row').forEach(row => {
+    const text = row.textContent.toLowerCase();
+    if (text.includes(q)) {
+      row.classList.add('match');
+      // Expand parents
+      let parent = row.closest('.node-children');
+      while (parent) {
+        parent.classList.remove('collapsed');
+        const toggle = parent.previousElementSibling?.querySelector('.toggle');
+        if (toggle) toggle.classList.add('open');
+        parent = parent.parentElement?.closest('.node-children');
+      }
+    }
+  });
+}
+
+// ── FORMAT XML ────────────────────────────────────────────────────────────────
+
+function formatXML(xml) {
+  const dp = new DOMParser();
+  const doc = dp.parseFromString(xml.trim(), 'application/xml');
+  const err = doc.querySelector('parsererror');
+  if (err) return xml; // return as-is if invalid
+
+  function serialize(node, indent) {
+    if (node.nodeType === 3) {
+      const t = node.textContent.trim();
+      return t ? '\n' + '  '.repeat(indent) + t : '';
+    }
+    if (node.nodeType !== 1) return '';
+    const pad = '  '.repeat(indent);
+    const tag = node.tagName;
+    let attrs = '';
+    for (const a of node.attributes) attrs += ` ${a.name}="${a.value}"`;
+    const children = Array.from(node.childNodes).map(c => serialize(c, indent + 1)).join('');
+    if (!children.trim()) return `\n${pad}<${tag}${attrs}/>`;
+    return `\n${pad}<${tag}${attrs}>${children}\n${pad}</${tag}>`;
+  }
+
+  return serialize(doc.documentElement, 0).trim();
+}
+
+// ── COPY ─────────────────────────────────────────────────────────────────────
+
+function copyText(text) {
+  navigator.clipboard.writeText(text).then(() => {
+    const t = document.getElementById('toast');
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 1800);
+  });
+}
+
+// ── LINE NUMBERS ─────────────────────────────────────────────────────────────
+
+function updateLineNumbers(text) {
+  const lines = text.split('\n');
+  const ln = document.getElementById('lineNumbers');
+  ln.innerHTML = lines.map((_, i) => `<span>${i + 1}</span>`).join('');
+  document.getElementById('lineCount').textContent = `${lines.length} lines`;
+  document.getElementById('charCount').textContent = `${text.length} chars`;
+}
+
+// ── MAIN PARSE ────────────────────────────────────────────────────────────────
+
+function doParse() {
+  const xml = document.getElementById('xmlInput').value.trim();
+  const output = document.getElementById('output');
+  const dot = document.getElementById('statusDot');
+  const status = document.getElementById('statusText');
+
+  if (!xml) {
+    output.innerHTML = `<div class="empty-state"><div class="empty-icon">&lt;/&gt;</div><div class="empty-label">No input</div></div>`;
+    dot.className = 'status-dot idle';
+    status.textContent = 'Ready';
+    document.getElementById('nodeCount').textContent = '—';
+    document.getElementById('treeDepth').textContent = '—';
+    return;
+  }
+
+  try {
+    const root = parseXMLSafe(xml);
+    nodeStats = { count: 0, depth: 0 };
+    countNodes(root);
+
+    output.innerHTML = '';
+    output.appendChild(renderNode(root, 0));
+
+    dot.className = 'status-dot ok';
+    status.textContent = 'Valid XML';
+    document.getElementById('nodeCount').textContent = nodeStats.count;
+    document.getElementById('treeDepth').textContent = nodeStats.depth + 1;
+    document.getElementById('infoPanel').innerHTML = `<div class="info-empty">Select a node to inspect</div>`;
+    document.getElementById('selectedPath').textContent = '';
+  } catch (e) {
+    output.innerHTML = `<div class="error-box"><div class="err-label">Parse Error</div>${escHtml(e.message)}</div>`;
+    dot.className = 'status-dot err';
+    status.textContent = 'Invalid XML';
+    document.getElementById('nodeCount').textContent = '—';
+    document.getElementById('treeDepth').textContent = '—';
+  }
+}
+
+// ── EVENTS ────────────────────────────────────────────────────────────────────
+
+const input = document.getElementById('xmlInput');
+
+input.addEventListener('input', () => {
+  updateLineNumbers(input.value);
+});
+
+input.addEventListener('keydown', e => {
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    const s = input.selectionStart, end = input.selectionEnd;
+    input.value = input.value.substring(0, s) + '  ' + input.value.substring(end);
+    input.selectionStart = input.selectionEnd = s + 2;
+    updateLineNumbers(input.value);
+  }
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+    doParse();
+  }
+});
+
+// sync scroll for line numbers
+input.addEventListener('scroll', () => {
+  document.getElementById('lineNumbers').scrollTop = input.scrollTop;
+});
+
+document.getElementById('btnParse').addEventListener('click', doParse);
+
+document.getElementById('btnClear').addEventListener('click', () => {
+  input.value = '';
+  updateLineNumbers('');
+  document.getElementById('output').innerHTML = `<div class="empty-state"><div class="empty-icon">&lt;/&gt;</div><div class="empty-label">Awaiting input</div></div>`;
+  document.getElementById('statusDot').className = 'status-dot idle';
+  document.getElementById('statusText').textContent = 'Ready';
+  document.getElementById('nodeCount').textContent = '—';
+  document.getElementById('treeDepth').textContent = '—';
+  document.getElementById('infoPanel').innerHTML = `<div class="info-empty">Select a node to inspect</div>`;
+  document.getElementById('selectedPath').textContent = '';
+  input.focus();
+});
+
+document.getElementById('btnFormat').addEventListener('click', () => {
+  const formatted = formatXML(input.value);
+  input.value = formatted;
+  updateLineNumbers(formatted);
+});
+
+document.getElementById('searchInput').addEventListener('input', e => {
+  searchNodes(e.target.value);
+});
+
+// Seed with demo XML
+const demo = `<?xml version="1.0" encoding="UTF-8"?>
+<library name="City Library" established="1921">
+  <section id="sci-fi" label="Science Fiction">
+    <book isbn="978-0-441-56059-1">
+      <title>Dune</title>
+      <author>Frank Herbert</author>
+      <year>1965</year>
+      <rating>9.2</rating>
+    </book>
+    <book isbn="978-0-06-112008-4">
+      <title>Neuromancer</title>
+      <author>William Gibson</author>
+      <year>1984</year>
+      <rating>8.7</rating>
+    </book>
+  </section>
+  <section id="classics" label="Classics">
+    <book isbn="978-0-14-028329-7">
+      <title>Moby Dick</title>
+      <author>Herman Melville</author>
+      <year>1851</year>
+    </book>
+  </section>
+</library>`;
+
+input.value = demo;
+updateLineNumbers(demo);
+doParse();
+</script>
+</body>
+</html>
